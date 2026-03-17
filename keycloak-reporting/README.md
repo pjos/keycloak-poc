@@ -451,12 +451,15 @@ docker exec clickhouse clickhouse-client --password clickhouse --query \
   "SELECT type, realmId, count() AS n FROM keycloak.keycloak_events GROUP BY type, realmId ORDER BY n DESC FORMAT Pretty"
 
 # 3. Open Metabase dashboard
-open http://localhost:3000
+open http://localhost:3000/dashboard/2
+
 
 # 4. Browse raw Kafka messages
 open http://localhost:8080
 ```
+![keycloak-kpi-1.png](images/keycloak-kpi-1.png)
 
+![keycloak-kpi-2.png](images/keycloak-kpi-2.png)
 ---
 
 ## Useful Commands
