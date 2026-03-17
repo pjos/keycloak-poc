@@ -46,6 +46,38 @@ mvn clean package
 
 ---
 
+### 3. Real-Time Event Analytics with Kafka, ClickHouse & Metabase
+
+A POC demonstrating how to stream every Keycloak authentication event into a high-performance analytics pipeline and visualise it in real time using Metabase dashboards.
+
+**Key Features:**
+- Native Kafka event listener (no polling, no external connector)
+- ClickHouse as an OLAP metrics store — sub-second aggregations over millions of events
+- Metabase interactive dashboards with date-range and realm filters
+- Automated realm provisioning and Kafka listener activation via the Admin REST API
+- Realistic multi-realm traffic simulation (PKCE, refresh token, client credentials flows)
+- End-to-end pipeline bootstrapped with a single `docker compose up`
+
+👉 **[Go to Real-Time Event Analytics Guide](./keycloak-reporting/README.md)**
+
+**Quick Start:**
+```bash
+# Add Keycloak hostname to /etc/hosts (once)
+echo "127.0.0.1  localhost.idyatech.fr" | sudo tee -a /etc/hosts
+
+cd keycloak-reporting
+docker compose up --build
+```
+
+| Service | URL | Credentials |
+|---|---|---|
+| Keycloak | https://localhost.idyatech.fr:8443 | admin / admin |
+| Metabase dashboard | http://localhost:3000 | admin@keycloak.local / Admin123! |
+| Kafka UI | http://localhost:8080 | — |
+| ClickHouse HTTP API | http://localhost:8123 | default / clickhouse |
+
+---
+
 ## Getting Started
 
 Each POC is self-contained in its own directory with:
@@ -76,14 +108,26 @@ keycloak-poc/
 │           ├── SpiffeClientRegistrationProviderFactory.java
 │           ├── SpiffeClientRegistrationProvider.java
 │           └── JwtSvidValidator.java
+├── keycloak-reporting/           # Real-Time Event Analytics POC
+│   ├── README.md                 # Complete guide
+│   ├── docker-compose.yml        # Full stack (Keycloak + Kafka + ClickHouse + Metabase)
+│   ├── keycloak/                 # Extensions: keycloak-kafka.jar, dataset.jar
+│   ├── clickhouse/
+│   │   └── init.sql              # Kafka engine + MergeTree + Materialized Views
+│   ├── dataset-loader/
+│   │   └── loader.py             # Realm/client/user provisioner + Kafka listener setup
+│   ├── traffic-simulator/
+│   │   └── simulator.py          # Multi-realm authentication traffic generator
+│   └── metabase/
+│       └── setup_dashboard.py    # Metabase auto-configurator (connection + dashboard)
 └── README.md                     # This file
 ```
 
 ## Prerequisites (All POCs)
 
 - Docker and Docker Compose (v2+)
-- ~2 GB disk space
-- Java 17+ and Maven 3.6+ (for keycloak-spiffe-dcr)
+- ~4 GB disk space (keycloak-reporting requires more due to ClickHouse + Kafka volumes)
+- Java 17+ and Maven 3.6+ (for keycloak-spiffe-dcr only)
 - Basic familiarity with Keycloak and identity management concepts
 
 ## Contributing
@@ -100,4 +144,6 @@ Feel free to extend this repository with additional POCs. When adding a new POC:
 - **Keycloak:** https://www.keycloak.org
 - **SPIFFE/SPIRE:** https://spiffe.io
 - **OIDC:** https://openid.net/connect/
-- **JWT:** https://jwt.io
+- **JWT:** https://jwt.ioD
+- **Kafka Listener:** https://github.com/SnuK87/keycloak-kafka
+- **Generating datasets:** https://www.keycloak.org/keycloak-benchmark/dataset-guide/latest/using-provider

@@ -1,0 +1,325 @@
+services:
+
+  # ==========================================================================
+  # Apache Kafka Broker (KRaft mode - no Zookeeper needed)
+  # ==========================================================================
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.5.3
+    container_name: keycloak
+    environment:
+      HOSTNAME: keycloak
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: true
+      KC_HTTP_ENABLED: true
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HOSTNAME: localhost.idyatech.fr
+      DEBUG: true
+      DEBUG_PORT: "*:8787"
+      KC_HTTP_MANAGEMENT_PORT: 9001
+      #KEYCLOAK_ADMIN: admin
+      #KEYCLOAK_ADMIN_PASSWORD: admin
+      KAFKA_TOPIC: keycloak-events
+      KAFKA_ADMIN_TOPIC: keycloak-admin-events
+      KAFKA_CLIENT_ID: keycloak
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    command:
+      - start
+      - --http-port=8180
+      - --https-certificate-file=/opt/keycloak/conf/ssl/cert.pem
+      - --https-certificate-key-file=/opt/keycloak/conf/ssl/key.pem
+      - --features=spiffe,client-auth-federated
+      - --log-level=INFO,org.apache.http:DEBUG
+      - --http-access-log-enabled=true
+      - --import-realm
+    ports:
+      - "8180:8180"
+      - "8443:8443"
+      - "9001:9001"
+      - "8787:8787"
+    volumes:
+      - keycloak:/opt/keycloak/data
+      - ./keycloak/ssl:/opt/keycloak/conf/ssl:ro
+      - ./keycloak/truststores:/opt/keycloak/conf/truststores:ro
+      - ./keycloak/spiffe-realm.json:/opt/keycloak/data/import/spiffe-realm.json:ro
+      - ./keycloak/keycloak-kafka.jar:/opt/keycloak/providers/keycloak-kafka.jar:ro
+      - ./keycloak/keycloak-benchmark-dataset.jar:/opt/keycloak/providers/keycloak-benchmark-dataset.jar:ro
+    healthcheck:
+      test: [ "CMD", "/bin/bash", "-c", "cat < /dev/null > /dev/tcp/localhost/9001" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+  kafka:
+    image: apache/kafka:3.9.2
+    container_name: kafka
+    hostname: kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      # KRaft settings
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # Listeners
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # Cluster
+      KAFKA_CLUSTER_ID: MkU3OEVBTTBSWk1JMkl0Qg
+
+      # Topic defaults
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+      # Auto-create topics
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+
+  # ==========================================================================
+  # Kafka UI - Web interface to browse topics, messages, consumers
+  # ==========================================================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # ==========================================================================
+  # ClickHouse - OLAP database with Kafka engine integration
+  # ==========================================================================
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12
+    container_name: clickhouse
+    hostname: clickhouse
+    ports:
+      - "8123:8123"   # HTTP interface
+      - "9000:9000"   # Native TCP interface
+    environment:
+      CLICKHOUSE_DB: keycloak
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --password clickhouse -q 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ==========================================================================
+  # Test client - Produces and consumes test messages
+  # ==========================================================================
+  kafka-test-client:
+    image: apache/kafka:3.9.2
+    container_name: kafka-test-client
+    depends_on:
+      kafka:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "============================================"
+        echo "  Kafka Test Client"
+        echo "============================================"
+        echo ""
+
+        echo ">> Creating test topics..."
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic keycloak-events      --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic keycloak-admin-events --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic test-topic           --partitions 1 --replication-factor 1
+        echo ""
+
+        echo ">> Listing topics:"
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
+        echo ""
+
+        echo ">> Producing test messages to 'test-topic'..."
+        for i in $$(seq 1 5); do
+          echo "{\"id\":$$i,\"type\":\"LOGIN\",\"user\":\"user-$$i\",\"timestamp\":\"$$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" | \
+            /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server kafka:29092 --topic test-topic
+          echo "   Sent message $$i"
+        done
+        echo ""
+
+        echo ">> Producing test messages to 'keycloak-events'..."
+        for i in $$(seq 1 3); do
+          echo "{\"type\":\"LOGIN\",\"realmId\":\"spiffe\",\"clientId\":\"mcp-client\",\"userId\":\"user-$$i\",\"ipAddress\":\"172.18.0.$$i\",\"time\":$$(date +%s)000}" | \
+            /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server kafka:29092 --topic keycloak-events
+          echo "   Sent keycloak event $$i"
+        done
+        echo ""
+
+        echo ">> Consuming messages from 'test-topic':"
+        timeout 5 /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:29092 --topic test-topic --from-beginning 2>/dev/null || true
+        echo ""
+
+        echo "============================================"
+        echo "  Test complete!"
+        echo "  Open Kafka UI: http://localhost:8080"
+        echo "============================================"
+
+        # Keep container alive for manual testing
+        echo ""
+        echo "Container will stay alive for manual testing."
+        echo "Use: docker exec -it kafka-test-client /bin/bash"
+        tail -f /dev/null
+
+  # ==========================================================================
+  # Dataset Loader - Provisions realms, clients, users in Keycloak
+  # On stop/kill, removes all created realms automatically.
+  # ==========================================================================
+  dataset-loader:
+    build: ./dataset-loader
+    container_name: dataset-loader
+    environment:
+      KEYCLOAK_URL: "https://keycloak:8443"
+      KEYCLOAK_BASE_PATH: "/auth"
+      KEYCLOAK_USER: "admin"
+      KEYCLOAK_PASSWORD: "admin"
+      REALM_COUNT: "5"
+      CLIENTS_PER_REALM: "10"
+      USERS_PER_REALM: "50"
+      REALM_PREFIX: "realm-"
+      VERIFY_SSL: "false"
+      # ID of the Keycloak SPI event listener registered by keycloak-kafka.jar
+      KAFKA_EVENT_LISTENER: "kafka"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    stop_grace_period: 60s
+
+  # ==========================================================================
+  # Traffic Simulator - Simulates user and client authentication flows
+  # ==========================================================================
+  traffic-simulator:
+    build: ./traffic-simulator
+    container_name: traffic-simulator
+    environment:
+      KEYCLOAK_URL: "https://keycloak:8443"
+      KEYCLOAK_BASE_PATH: "/auth"
+      KEYCLOAK_HOSTNAME: "localhost.idyatech.fr"
+      REALM_COUNT: "5"
+      CLIENTS_PER_REALM: "10"
+      USERS_PER_REALM: "50"
+      REALM_PREFIX: "realm-"
+      VERIFY_SSL: "false"
+      LOOP: "true"
+      LOOP_COUNT: "3"       # 0 = infinite
+      LOOP_DELAY: "5"
+      REQUEST_DELAY: "0.1"
+      CONCURRENCY: "4"
+      LOGIN_CLIENT_ID: "account"
+      # Naming patterns — {i} is replaced by the computed user/client index
+      USER_NAME_PATTERN: "user-{i}"
+      USER_PASS_PATTERN: "user-{i}-password"
+      CLIENT_ID_PATTERN: "client-{i}"
+      CLIENT_SECRET_PATTERN: "client-{i}-secret"
+      # Set to "true" if the dataset-loader creates users with a GLOBAL sequential
+      # counter across realms (i.e. realm-1 has user-50..user-99 when 50 users/realm).
+      # Set to "false" (default) if each realm has its own 0-based index.
+      USER_INDEX_GLOBAL: "false"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      dataset-loader:
+        condition: service_started
+
+  # ==========================================================================
+  # Metabase - BI / Dashboard with ClickHouse connector
+  # ==========================================================================
+  metabase:
+    image: metabase/metabase:v0.52.6
+    container_name: metabase
+    ports:
+      - "3000:3000"
+    environment:
+      MB_DB_TYPE: h2
+      MB_PLUGINS_DIR: /plugins
+    volumes:
+      - metabase-data:/metabase-data
+      - metabase-plugins:/plugins
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Download ClickHouse driver plugin if not already present
+        if [ ! -f /plugins/clickhouse.metabase-driver.jar ]; then
+          echo ">> Downloading ClickHouse Metabase driver..."
+          curl -fsSL -o /plugins/clickhouse.metabase-driver.jar \
+            https://github.com/ClickHouse/metabase-clickhouse-driver/releases/download/1.53.4/clickhouse.metabase-driver.jar
+          echo ">> ClickHouse driver installed."
+        else
+          echo ">> ClickHouse driver already present."
+        fi
+        # Start Metabase
+        exec /app/run_metabase.sh
+
+  # ==========================================================================
+  # Metabase Setup - Auto-configures ClickHouse connection & dashboard
+  # ==========================================================================
+  metabase-setup:
+    build: ./metabase
+    container_name: metabase-setup
+    environment:
+      METABASE_URL: "http://metabase:3000"
+      METABASE_EMAIL: "admin@keycloak.local"
+      METABASE_PASSWORD: "Admin123!"
+      METABASE_FIRST_NAME: "Admin"
+      METABASE_LAST_NAME: "Keycloak"
+      CLICKHOUSE_HOST: "clickhouse"
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DB: "keycloak"
+      CLICKHOUSE_USER: "default"
+      CLICKHOUSE_PASSWORD: "clickhouse"
+    depends_on:
+      metabase:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+
+volumes:
+  keycloak:
+  kafka-data:
+  clickhouse-data:
+  clickhouse-logs:
+  metabase-data:
+  metabase-plugins:
+
