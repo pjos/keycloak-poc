@@ -22,7 +22,7 @@ services:
       - ./spire-agent:/opt/spire/conf/server:ro
       - /var/run/docker.sock:/var/run/docker.sock:rw
       - spire-agent-sockets:/opt/spire/sockets:rw
-    command: ["-config", "/opt/spire/conf/server/agent.conf","-joinToken", "14ef41f9-f386-4956-8c6d-b11534894754"]
+    command: ["-config", "/opt/spire/conf/server/agent.conf","-joinToken", "99cbc962-8f2b-40d9-97ce-ef577b81ea60"]
     depends_on:
       spire-server:
           condition: service_healthy
@@ -93,7 +93,7 @@ services:
       - ./keycloak/ssl:/opt/keycloak/conf/ssl:ro
       - ./keycloak/truststores:/opt/keycloak/conf/truststores:ro
       - ./keycloak/spiffe-realm.json:/opt/keycloak/data/import/spiffe-realm.json:ro
-      - ./../keycloak-spiffe-dcr/target/keycloak-spiffe-dcr-1.0-SNAPSHOT.jar:/opt/keycloak/providers/keycloak-spiffe-dcr-1.0-SNAPSHOT.jar:ro
+      - ./keycloak/keycloak-spiffe-dcr-1.0-SNAPSHOT.jar:/opt/keycloak/providers/keycloak-spiffe-dcr-1.0-SNAPSHOT.jar:ro
     healthcheck:
       test: ["CMD", "/bin/bash", "-c", "cat < /dev/null > /dev/tcp/localhost/9000"]
       interval: 10s
