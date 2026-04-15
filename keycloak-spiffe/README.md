@@ -361,7 +361,7 @@ docker compose up -d --build
 
 3. **Restart the agent service:**
    ```bash
-   docker compose restart spire-agent
+   docker compose up -d
    ```
 
 4. **Verify the logs to confirm registration:**
